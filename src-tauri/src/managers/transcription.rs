@@ -385,17 +385,37 @@ impl TranscriptionManager {
                         .map_err(|e| anyhow::anyhow!("Parakeet transcription failed: {}", e))?
                 }
                 LoadedEngine::Groq(groq_engine) => {
-                    // Groq is async, need to block on it
+                    // Groq is async, we need to handle it carefully to avoid runtime conflicts
                     let language = if settings.selected_language == "auto" {
                         None
                     } else {
                         Some(settings.selected_language.clone())
                     };
 
-                    let text = tokio::runtime::Runtime::new()
-                        .unwrap()
-                        .block_on(groq_engine.transcribe_samples(audio.clone(), language))
-                        .map_err(|e| anyhow::anyhow!("Groq transcription failed: {}", e))?;
+                    // Try to use the current tokio runtime handle if available,
+                    // otherwise create a new runtime in a separate thread
+                    let text = if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                        // We're already in a tokio runtime context
+                        // Spawn a blocking task that creates its own runtime to avoid conflicts
+                        let groq_engine = groq_engine.clone();
+                        let audio_clone = audio.clone();
+
+                        std::thread::scope(|s| {
+                            s.spawn(|| {
+                                tokio::runtime::Runtime::new()
+                                    .unwrap()
+                                    .block_on(groq_engine.transcribe_samples(audio_clone, language))
+                            })
+                            .join()
+                            .expect("Failed to join transcription thread")
+                        })
+                    } else {
+                        // No tokio runtime available, create one
+                        tokio::runtime::Runtime::new()
+                            .unwrap()
+                            .block_on(groq_engine.transcribe_samples(audio.clone(), language))
+                    }
+                    .map_err(|e| anyhow::anyhow!("Groq transcription failed: {}", e))?;
 
                     // Groq returns text directly, wrap it in a result structure
                     transcribe_rs::TranscriptionResult {

@@ -18,6 +18,7 @@ struct GroqTranscriptionResponse {
     text: String,
 }
 
+#[derive(Clone)]
 pub struct GroqEngine {
     client: reqwest::Client,
 }
