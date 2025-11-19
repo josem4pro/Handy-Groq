@@ -17,6 +17,7 @@ use tauri::{AppHandle, Emitter, Manager};
 pub enum EngineType {
     Whisper,
     Parakeet,
+    Groq,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -179,6 +180,26 @@ impl ModelManager {
                 engine_type: EngineType::Parakeet,
                 accuracy_score: 0.80,
                 speed_score: 0.85,
+            },
+        );
+
+        // Add Groq Cloud API model
+        available_models.insert(
+            "groq".to_string(),
+            ModelInfo {
+                id: "groq".to_string(),
+                name: "Groq Cloud (Whisper Large v3)".to_string(),
+                description: "Ultra-fast cloud transcription via Groq API. Requires internet connection.".to_string(),
+                filename: "".to_string(), // No local file needed
+                url: None, // Cloud-based, no download
+                size_mb: 0, // Cloud-based, no local storage
+                is_downloaded: true, // Always "downloaded" since it's cloud-based
+                is_downloading: false,
+                partial_size: 0,
+                is_directory: false,
+                engine_type: EngineType::Groq,
+                accuracy_score: 0.95, // Groq uses whisper-large-v3, highest accuracy
+                speed_score: 0.99,     // Extremely fast due to Groq's LPU architecture
             },
         );
 

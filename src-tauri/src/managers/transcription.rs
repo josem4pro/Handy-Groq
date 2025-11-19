@@ -1,4 +1,5 @@
 use crate::audio_toolkit::apply_custom_words;
+use crate::managers::groq_engine::GroqEngine;
 use crate::managers::model::{EngineType, ModelManager};
 use crate::settings::{get_settings, ModelUnloadTimeout};
 use anyhow::Result;
@@ -30,6 +31,7 @@ pub struct ModelStateEvent {
 enum LoadedEngine {
     Whisper(WhisperEngine),
     Parakeet(ParakeetEngine),
+    Groq(GroqEngine),
 }
 
 #[derive(Clone)]
@@ -142,6 +144,10 @@ impl TranscriptionManager {
                 match loaded_engine {
                     LoadedEngine::Whisper(ref mut whisper) => whisper.unload_model(),
                     LoadedEngine::Parakeet(ref mut parakeet) => parakeet.unload_model(),
+                    LoadedEngine::Groq(_) => {
+                        // Groq is cloud-based, nothing to unload locally
+                        debug!("Groq engine unload (no-op for cloud engine)");
+                    }
                 }
             }
             *engine = None; // Drop the engine to free memory
@@ -204,11 +210,10 @@ impl TranscriptionManager {
             return Err(anyhow::anyhow!(error_msg));
         }
 
-        let model_path = self.model_manager.get_model_path(model_id)?;
-
         // Create appropriate engine based on model type
         let loaded_engine = match model_info.engine_type {
             EngineType::Whisper => {
+                let model_path = self.model_manager.get_model_path(model_id)?;
                 let mut engine = WhisperEngine::new();
                 engine.load_model(&model_path).map_err(|e| {
                     let error_msg = format!("Failed to load whisper model {}: {}", model_id, e);
@@ -226,6 +231,7 @@ impl TranscriptionManager {
                 LoadedEngine::Whisper(engine)
             }
             EngineType::Parakeet => {
+                let model_path = self.model_manager.get_model_path(model_id)?;
                 let mut engine = ParakeetEngine::new();
                 engine
                     .load_model_with_params(&model_path, ParakeetModelParams::int8())
@@ -244,6 +250,11 @@ impl TranscriptionManager {
                         anyhow::anyhow!(error_msg)
                     })?;
                 LoadedEngine::Parakeet(engine)
+            }
+            EngineType::Groq => {
+                // Groq is cloud-based, instantiate immediately
+                debug!("Loading Groq cloud engine (no local model required)");
+                LoadedEngine::Groq(GroqEngine::new())
             }
         };
 
@@ -360,7 +371,7 @@ impl TranscriptionManager {
                     };
 
                     whisper_engine
-                        .transcribe_samples(audio, Some(params))
+                        .transcribe_samples(audio.clone(), Some(params))
                         .map_err(|e| anyhow::anyhow!("Whisper transcription failed: {}", e))?
                 }
                 LoadedEngine::Parakeet(parakeet_engine) => {
@@ -370,8 +381,27 @@ impl TranscriptionManager {
                     };
 
                     parakeet_engine
-                        .transcribe_samples(audio, Some(params))
+                        .transcribe_samples(audio.clone(), Some(params))
                         .map_err(|e| anyhow::anyhow!("Parakeet transcription failed: {}", e))?
+                }
+                LoadedEngine::Groq(groq_engine) => {
+                    // Groq is async, need to block on it
+                    let language = if settings.selected_language == "auto" {
+                        None
+                    } else {
+                        Some(settings.selected_language.clone())
+                    };
+
+                    let text = tokio::runtime::Runtime::new()
+                        .unwrap()
+                        .block_on(groq_engine.transcribe_samples(audio.clone(), language))
+                        .map_err(|e| anyhow::anyhow!("Groq transcription failed: {}", e))?;
+
+                    // Groq returns text directly, wrap it in a result structure
+                    transcribe_rs::TranscriptionResult {
+                        text,
+                        segments: Vec::new(),
+                    }
                 }
             }
         };
