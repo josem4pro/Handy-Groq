@@ -14,6 +14,15 @@ mod tray;
 mod utils;
 
 use env_filter::Builder as EnvFilterBuilder;
+
+// Load .env file if it exists (for GROQ_API_KEY and other environment variables)
+fn load_env_file() {
+    // Try to load from project root first
+    if let Err(_) = dotenvy::from_path("../.env") {
+        // Try current directory as fallback
+        let _ = dotenvy::dotenv();
+    }
+}
 use managers::audio::AudioRecordingManager;
 use managers::history::HistoryManager;
 use managers::model::ModelManager;
@@ -205,6 +214,9 @@ fn trigger_update_check(app: AppHandle) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Load .env file for development (contains GROQ_API_KEY)
+    load_env_file();
+
     // Parse console logging directives from RUST_LOG, falling back to info-level logging
     // when the variable is unset
     let console_filter = build_console_filter();
